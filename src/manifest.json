@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "Bible Verse Inserter",
+  "version": "2.0.0",
+  "description": "Quickly insert Bible verses (ESV, NIV, NASB, KJV) from any website",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "clipboardWrite",
+    "clipboardRead",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.supabase.co/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Bible Verse Inserter",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["browser-polyfill.js", "content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["browser-polyfill.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bible-verse-inserter@mozilla.org",
+      "strict_min_version": "109.0"
+    }
+  }
+}
