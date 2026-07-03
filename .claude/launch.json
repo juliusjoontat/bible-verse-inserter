@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "wedding-planner",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/juliusho/Downloads/Coding Project/Wedding Planner' && exec '/Users/juliusho/.local/share/mise/installs/ruby/4.0.5/bin/ruby' bin/rails server -p 3000"
+      ],
+      "port": 3000
+    }
+  ]
+}
