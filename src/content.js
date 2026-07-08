@@ -4,12 +4,12 @@
  */
 
 // Use browser API (works with polyfill on all browsers)
-const browser = typeof browser !== 'undefined' ? browser : chrome;
+const browserAPI = globalThis.browser ?? globalThis.chrome;
 
 /**
  * Listen for messages from popup
  */
-browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
+browserAPI.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'pasteVerse') {
     const success = pasteIntoActiveElement(request.text);
     sendResponse({ success: success });

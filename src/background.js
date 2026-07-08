@@ -3,31 +3,27 @@
  * Handles extension lifecycle and background tasks
  */
 
-const browser = typeof browser !== 'undefined' ? browser : chrome;
+const browserAPI = globalThis.browser ?? globalThis.chrome;
 
 /**
  * Extension installed/updated
  */
-browser.runtime.onInstalled.addListener((details) => {
+browserAPI.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
     console.log('[BibleExtension] Extension installed');
-    // Open welcome page
-    browser.tabs.create({
-      url: 'https://github.com/your-repo/bible-extension/README.md'
-    });
   } else if (details.reason === 'update') {
-    console.log('[BibleExtension] Extension updated to version', browser.runtime.getManifest().version);
+    console.log('[BibleExtension] Extension updated to version', browserAPI.runtime.getManifest().version);
   }
 });
 
 /**
  * Handle messages from content scripts or popup
  */
-browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
+browserAPI.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('[BibleExtension] Message received:', request);
-  
+
   if (request.action === 'getVersion') {
-    const manifest = browser.runtime.getManifest();
+    const manifest = browserAPI.runtime.getManifest();
     sendResponse({ version: manifest.version });
   }
   
@@ -40,7 +36,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 /**
  * Handle extension icon click
  */
-browser.action.onClicked.addListener((tab) => {
+browserAPI.action.onClicked.addListener((tab) => {
   console.log('[BibleExtension] Icon clicked on tab:', tab.url);
 });
 
