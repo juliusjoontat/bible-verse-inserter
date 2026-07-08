@@ -233,7 +233,7 @@ function getBookNumber(name) {
     'ezra': 15, 'ezr': 15,
     'nehemiah': 16, 'neh': 16,
     'esther': 17, 'est': 17,
-    'job': 18, 'job': 18,
+    'job': 18,
     'psalm': 19, 'psalms': 19, 'psa': 19,
     'proverbs': 20, 'pro': 20,
     'ecclesiastes': 21, 'ecc': 21,
@@ -274,16 +274,17 @@ function getBookNumber(name) {
     'hebrews': 58, 'heb': 58,
     'james': 59, 'jam': 59,
     'peter': 60, 'pet': 60,
-    'john': 62, 'joh': 62, // 1 John
-    'jude': 65, 'jud': 65,
+    'jude': 65,
     'revelation': 66, 'rev': 66
   };
-  
+
   let bookNum = books[searchName];
-  
+
   // Handle numbered books
   if (bookNum && numberedMatch) {
     const prefix = parseInt(numberedMatch[1]);
+    // "1/2/3 John" are the epistles (62-64), not the Gospel of John (43)
+    if (bookNum === 43) bookNum = 62;
     if (prefix === 2) bookNum++;
     else if (prefix === 3) bookNum += 2;
   }
