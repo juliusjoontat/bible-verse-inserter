@@ -30,11 +30,11 @@ function showStatus(message, type = 'loading') {
   }
 }
 
-// ========== FETCH VERSE FROM API ==========
+// ========== FETCH VERSES FROM API ==========
 async function fetchVerse(reference, version) {
   try {
-    showStatus('Fetching verse...', 'loading');
-    
+    showStatus('Fetching verses...', 'loading');
+
     // Validate config
     const validation = validateConfig();
     if (!validation.valid) {
@@ -42,79 +42,36 @@ async function fetchVerse(reference, version) {
       log('Config errors:', validation.errors);
       return;
     }
-    
-    // Parse the reference
-    const parseResult = parseVerseReference(reference.trim());
-    if (!parseResult) {
-      showStatus('Invalid format. Try: John 3:16 or Genesis 1:1-5', 'error');
+
+    // Parse the reference list (e.g. "Rom 1:18-23, 3:9, 3:19-20, 3:23")
+    const refs = parseReferenceList(reference.trim());
+    if (!refs) {
+      showStatus('Invalid format. Try: John 3:16 or Rom 1:18-23, 3:9, 3:23', 'error');
       return;
     }
-    
-    const { book, chapter, startVerse, endVerse } = parseResult;
-    const bookNum = getBookNumber(book);
-    
-    if (!bookNum) {
-      showStatus('Book not found. Check spelling.', 'error');
-      return;
-    }
-    
-    log(`Fetching ${version} - Book: ${bookNum}, Chapter: ${chapter}, Verses: ${startVerse || 'all'}`);
-    
-    // Check cache first
-    const cacheKey = `${version}-${bookNum}-${chapter}-${startVerse || 'all'}-${endVerse || ''}`;
-    if (CONFIG.CACHE_ENABLED && verseCache.has(cacheKey)) {
-      log('Using cached verse');
-      const cachedVerse = verseCache.get(cacheKey);
-      displayVerses(cachedVerse.verses, reference, version);
-      showStatus('✓ Verse loaded (from cache)!', 'success');
-      return;
-    }
-    
-    // Build API query
-    let url = `${CONFIG.SUPABASE_URL}${CONFIG.API_ENDPOINT}?translation=eq.${version}&book_number=eq.${bookNum}&chapter=eq.${chapter}&order=verse_number.asc`;
-    
-    // Add verse range filter if specified
-    if (startVerse) {
-      const endV = endVerse || startVerse;
-      url += `&verse_number=gte.${startVerse}&verse_number=lte.${endV}`;
-    }
-    
-    log('API URL:', url);
-    
-    // Fetch from Supabase
-    const response = await fetch(url, {
-      headers: {
-        'apikey': CONFIG.SUPABASE_KEY,
-        'Authorization': `Bearer ${CONFIG.SUPABASE_KEY}`,
-        'Content-Type': 'application/json'
+
+    const segments = [];
+    for (const ref of refs) {
+      const bookNum = getBookNumber(ref.book);
+      if (!bookNum) {
+        showStatus(`Book not found: "${ref.book}". Check spelling.`, 'error');
+        return;
       }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+
+      log(`Fetching ${version} - Book: ${bookNum}, Chapter: ${ref.chapter}, Verses: ${ref.startVerse || 'all'}`);
+
+      const verses = await fetchSegment(bookNum, ref, version);
+      if (!verses || verses.length === 0) {
+        showStatus(`Verse not found: ${formatRef(ref)}. Check your reference.`, 'error');
+        return;
+      }
+
+      segments.push({ ref, verses });
     }
-    
-    const verses = await response.json();
-    
-    if (!verses || verses.length === 0) {
-      showStatus('Verse not found. Check your reference.', 'error');
-      return;
-    }
-    
-    log(`Fetched ${verses.length} verses`);
-    
-    // Cache the result
-    if (CONFIG.CACHE_ENABLED) {
-      verseCache.set(cacheKey, {
-        verses: verses,
-        timestamp: Date.now()
-      });
-    }
-    
-    // Display verses
-    displayVerses(verses, reference, version);
-    showStatus('✓ Verse loaded!', 'success');
-    
+
+    displaySegments(segments, version);
+    showStatus('✓ Verses loaded!', 'success');
+
   } catch (error) {
     console.error('Error fetching verse:', error);
     showStatus(`Error: ${error.message}`, 'error');
@@ -122,25 +79,93 @@ async function fetchVerse(reference, version) {
   }
 }
 
+// ========== FETCH A SINGLE PASSAGE ==========
+async function fetchSegment(bookNum, ref, version) {
+  const { chapter, startVerse, endVerse } = ref;
+
+  // Check cache first
+  const cacheKey = `${version}-${bookNum}-${chapter}-${startVerse || 'all'}-${endVerse || ''}`;
+  if (CONFIG.CACHE_ENABLED && verseCache.has(cacheKey)) {
+    log('Using cached verses for', cacheKey);
+    return verseCache.get(cacheKey).verses;
+  }
+
+  // Build API query
+  let url = `${CONFIG.SUPABASE_URL}${CONFIG.API_ENDPOINT}?translation=eq.${version}&book_number=eq.${bookNum}&chapter=eq.${chapter}&order=verse_number.asc`;
+
+  // Add verse range filter if specified
+  if (startVerse) {
+    const endV = endVerse || startVerse;
+    url += `&verse_number=gte.${startVerse}&verse_number=lte.${endV}`;
+  }
+
+  log('API URL:', url);
+
+  const response = await fetch(url, {
+    headers: {
+      'apikey': CONFIG.SUPABASE_KEY,
+      'Authorization': `Bearer ${CONFIG.SUPABASE_KEY}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`API Error: ${response.status} ${response.statusText}`);
+  }
+
+  const verses = await response.json();
+  log(`Fetched ${verses.length} verses`);
+
+  if (CONFIG.CACHE_ENABLED && verses.length > 0) {
+    verseCache.set(cacheKey, {
+      verses: verses,
+      timestamp: Date.now()
+    });
+  }
+
+  return verses;
+}
+
+// ========== FORMAT A PARSED REFERENCE ==========
+function formatRef(ref) {
+  let str = `${ref.book} ${ref.chapter}`;
+  if (ref.startVerse) {
+    str += `:${ref.startVerse}`;
+    if (ref.endVerse) str += `-${ref.endVerse}`;
+  }
+  return str;
+}
+
 // ========== DISPLAY VERSES ==========
-function displayVerses(verses, originalRef, version) {
-  // Build formatted verse text
-  const verseText = verses
-    .map(v => `<sup>${v.verse_number}</sup> ${v.text}`)
-    .join(' ');
-  
-  const referenceStr = `${originalRef.trim()} (${getVersionName(version)})`;
-  
+function displaySegments(segments, version) {
+  const multiple = segments.length > 1;
+
+  // Build formatted HTML, one block per passage
+  const verseHtml = segments
+    .map(({ ref, verses }) => {
+      const header = multiple ? `<div class="verse-reference">${formatRef(ref)}</div>` : '';
+      const body = verses
+        .map(v => `<sup>${v.verse_number}</sup> ${v.text}`)
+        .join(' ');
+      return `${header}<div>${body}</div>`;
+    })
+    .join('<div class="verse-divider"></div>');
+
+  const referenceStr = `${segments.map(s => formatRef(s.ref)).join('; ')} (${getVersionName(version)})`;
+
   // Build plain text for copying
-  currentVerseText = `${referenceStr}\n\n${verses
-    .map(v => `${v.verse_number}. ${v.text}`)
-    .join('\n')}`;
-  
+  currentVerseText = `${referenceStr}\n\n` + segments
+    .map(({ ref, verses }) => {
+      const header = multiple ? `${formatRef(ref)}\n` : '';
+      return header + verses.map(v => `${v.verse_number}. ${v.text}`).join('\n');
+    })
+    .join('\n\n');
+
   currentVerseRef = referenceStr;
-  
+
   // Display in popup
   verseRefSpan.textContent = referenceStr;
-  verseTextDiv.innerHTML = verseText;
+  verseTextDiv.innerHTML = verseHtml;
   verseOutput.classList.add('show');
 }
 
@@ -191,22 +216,57 @@ async function pasteVerse() {
   }
 }
 
-// ========== PARSE VERSE REFERENCE ==========
-function parseVerseReference(ref) {
-  // Matches: "John 3:16", "John 3:16-18", "John 3", "1 John 3:16"
-  const pattern = /^([0-9]*\s*[a-zA-Z\s]+?)\s+(\d+)(?::(\d+))?(?:-(\d+))?$/;
-  const match = ref.match(pattern);
-  
-  if (!match) return null;
-  
-  const [, bookName, chapterStr, startVerseStr, endVerseStr] = match;
-  
-  return {
-    book: bookName.trim(),
-    chapter: parseInt(chapterStr),
-    startVerse: startVerseStr ? parseInt(startVerseStr) : null,
-    endVerse: endVerseStr ? parseInt(endVerseStr) : null
-  };
+// ========== PARSE VERSE REFERENCES ==========
+// Parses a comma-separated list of references. Later segments inherit the
+// book (and chapter, for bare verse numbers) from the previous segment:
+//   "Rom 1:18-23, 3:9, 3:19-20, 3:23" -> Rom 1:18-23; Rom 3:9; Rom 3:19-20; Rom 3:23
+//   "John 3:16, 18, 4:1-3"            -> John 3:16; John 3:18; John 4:1-3
+function parseReferenceList(input) {
+  const segments = input.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  if (segments.length === 0) return null;
+
+  const refs = [];
+  let currentBook = null;
+  let currentChapter = null;
+
+  for (const seg of segments) {
+    // Full reference: "John 3:16", "John 3:16-18", "John 3", "1 John 3:16"
+    const full = seg.match(/^([0-9]*\s*[a-zA-Z\s]+?)\s+(\d+)(?::(\d+))?(?:-(\d+))?$/);
+    // Chapter and verse, book inherited: "3:9", "3:19-20"
+    const chapVerse = seg.match(/^(\d+):(\d+)(?:-(\d+))?$/);
+    // Verse only, book and chapter inherited: "23", "23-25"
+    const verseOnly = seg.match(/^(\d+)(?:-(\d+))?$/);
+
+    if (full) {
+      currentBook = full[1].trim();
+      currentChapter = parseInt(full[2]);
+      refs.push({
+        book: currentBook,
+        chapter: currentChapter,
+        startVerse: full[3] ? parseInt(full[3]) : null,
+        endVerse: full[4] ? parseInt(full[4]) : null
+      });
+    } else if (chapVerse && currentBook) {
+      currentChapter = parseInt(chapVerse[1]);
+      refs.push({
+        book: currentBook,
+        chapter: currentChapter,
+        startVerse: parseInt(chapVerse[2]),
+        endVerse: chapVerse[3] ? parseInt(chapVerse[3]) : null
+      });
+    } else if (verseOnly && currentBook && currentChapter) {
+      refs.push({
+        book: currentBook,
+        chapter: currentChapter,
+        startVerse: parseInt(verseOnly[1]),
+        endVerse: verseOnly[2] ? parseInt(verseOnly[2]) : null
+      });
+    } else {
+      return null;
+    }
+  }
+
+  return refs;
 }
 
 // ========== BOOK NAME TO NUMBER ==========

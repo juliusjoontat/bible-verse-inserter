@@ -9,6 +9,15 @@
         "cd '/Users/juliusho/Downloads/Coding Project/Wedding Planner' && exec '/Users/juliusho/.local/share/mise/installs/ruby/4.0.5/bin/ruby' bin/rails server -p 3000"
       ],
       "port": 3000
+    },
+    {
+      "name": "bible-popup",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/private/tmp/claude-501/-Users-juliusho-Downloads-Coding-Project-bible-extension-project/cb84cab8-3ed5-4a1d-bfe0-1ec94be9621b/scratchpad/popup-preview' && exec python3 -m http.server 8765"
+      ],
+      "port": 8765
     }
   ]
 }
