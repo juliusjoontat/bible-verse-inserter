@@ -4,6 +4,7 @@
  */
 
 // ========== DOM ELEMENTS ==========
+const fetchBtn = document.getElementById('fetchBtn');
 const copyBtn = document.getElementById('copyBtn');
 const pasteBtn = document.getElementById('pasteBtn');
 const verseRefInput = document.getElementById('verseReference');
@@ -16,6 +17,7 @@ const verseTextDiv = document.getElementById('verseText');
 // ========== STATE ==========
 let currentVerseText = '';
 let currentVerseRef = '';
+let lastFetchedKey = '';
 let verseCache = new Map();
 
 // ========== STATUS DISPLAY ==========
@@ -35,13 +37,10 @@ async function fetchVerse(reference, version) {
   try {
     showStatus('Fetching verses...', 'loading');
 
-    // Validate config
-    const validation = validateConfig();
-    if (!validation.valid) {
-      showStatus('⚠️ Extension not configured. See README.', 'error');
-      log('Config errors:', validation.errors);
-      return;
-    }
+    // Clear stale state so a failed fetch can't reuse the previous result
+    currentVerseText = '';
+    currentVerseRef = '';
+    lastFetchedKey = '';
 
     // Parse the reference list (e.g. "Rom 1:18-23, 3:9, 3:19-20, 3:23")
     const refs = parseReferenceList(reference.trim());
@@ -50,26 +49,32 @@ async function fetchVerse(reference, version) {
       return;
     }
 
-    const segments = [];
+    // Resolve all book names first so bad input fails fast
+    const lookups = [];
     for (const ref of refs) {
       const bookNum = getBookNumber(ref.book);
       if (!bookNum) {
         showStatus(`Book not found: "${ref.book}". Check spelling.`, 'error');
         return;
       }
+      lookups.push({ ref, bookNum });
+    }
 
+    // Fetch all passages in parallel
+    const segments = await Promise.all(lookups.map(async ({ ref, bookNum }) => {
       log(`Fetching ${version} - Book: ${bookNum}, Chapter: ${ref.chapter}, Verses: ${ref.startVerse || 'all'}`);
-
       const verses = await fetchSegment(bookNum, ref, version);
-      if (!verses || verses.length === 0) {
-        showStatus(`Verse not found: ${formatRef(ref)}. Check your reference.`, 'error');
-        return;
-      }
+      return { ref, verses };
+    }));
 
-      segments.push({ ref, verses });
+    const missing = segments.find(s => !s.verses || s.verses.length === 0);
+    if (missing) {
+      showStatus(`Verse not found: ${formatRef(missing.ref)}. Check your reference.`, 'error');
+      return;
     }
 
     displaySegments(segments, version);
+    lastFetchedKey = `${version}|${reference.trim()}`;
     showStatus('✓ Verses loaded!', 'success');
 
   } catch (error) {
@@ -80,7 +85,66 @@ async function fetchVerse(reference, version) {
 }
 
 // ========== FETCH A SINGLE PASSAGE ==========
+// Uses Supabase when configured, otherwise falls back to the free
+// public API (no key needed).
 async function fetchSegment(bookNum, ref, version) {
+  if (validateConfig().valid) {
+    return fetchSegmentSupabase(bookNum, ref, version);
+  }
+  return fetchSegmentPublic(bookNum, ref, version);
+}
+
+async function fetchSegmentPublic(bookNum, ref, version) {
+  const { chapter, startVerse, endVerse } = ref;
+  const chapterVerses = await fetchChapterPublic(bookNum, chapter, version);
+
+  if (!startVerse) return chapterVerses;
+  const endV = endVerse || startVerse;
+  return chapterVerses.filter(v => v.verse_number >= startVerse && v.verse_number <= endV);
+}
+
+// Downloads a whole chapter once; ranges are filtered client-side. The
+// in-flight promise is cached so parallel segments of the same chapter
+// (e.g. "Rom 3:9, 3:19-20, 3:23") share a single download.
+function fetchChapterPublic(bookNum, chapter, version) {
+  const cacheKey = `public-${version}-${bookNum}-${chapter}`;
+
+  if (CONFIG.CACHE_ENABLED && verseCache.has(cacheKey)) {
+    log('Using cached chapter for', cacheKey);
+    return verseCache.get(cacheKey).promise;
+  }
+
+  const promise = (async () => {
+    const url = `${CONFIG.PUBLIC_API_URL}/get-text/${version.toUpperCase()}/${bookNum}/${chapter}/`;
+    log('Public API URL:', url);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.map(v => ({
+      verse_number: v.verse,
+      // Strip Strong's concordance tags (<S>1063</S>) and any other markup
+      text: v.text
+        .replace(/<S>[^<]*<\/S>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }));
+  })();
+
+  if (CONFIG.CACHE_ENABLED) {
+    verseCache.set(cacheKey, { promise, timestamp: Date.now() });
+    // Don't cache failures
+    promise.catch(() => verseCache.delete(cacheKey));
+  }
+
+  return promise;
+}
+
+async function fetchSegmentSupabase(bookNum, ref, version) {
   const { chapter, startVerse, endVerse } = ref;
 
   // Check cache first
@@ -169,13 +233,29 @@ function displaySegments(segments, version) {
   verseOutput.classList.add('show');
 }
 
-// ========== COPY TO CLIPBOARD ==========
-function copyToClipboard() {
-  if (!currentVerseText) {
-    showStatus('No verse to copy. Fetch a verse first.', 'error');
-    return;
+// ========== ENSURE VERSES ARE FETCHED ==========
+// Fetches automatically when the reference or version changed since the
+// last fetch, so Copy/Paste work without pressing Enter first.
+async function ensureFetched() {
+  const reference = verseRefInput.value.trim();
+  if (!reference) {
+    showStatus('Please enter a verse reference.', 'error');
+    return false;
   }
-  
+
+  const key = `${versionSelect.value}|${reference}`;
+  if (currentVerseText && key === lastFetchedKey) {
+    return true;
+  }
+
+  await fetchVerse(reference, versionSelect.value);
+  return !!currentVerseText;
+}
+
+// ========== COPY TO CLIPBOARD ==========
+async function copyToClipboard() {
+  if (!(await ensureFetched())) return;
+
   navigator.clipboard.writeText(currentVerseText).then(() => {
     showStatus('✓ Copied to clipboard!', 'success');
   }).catch((err) => {
@@ -186,11 +266,8 @@ function copyToClipboard() {
 
 // ========== AUTO-PASTE VERSE ==========
 async function pasteVerse() {
-  if (!currentVerseText) {
-    showStatus('No verse to paste. Fetch a verse first.', 'error');
-    return;
-  }
-  
+  if (!(await ensureFetched())) return;
+
   try {
     showStatus('Pasting...', 'loading');
     
@@ -368,20 +445,13 @@ function getVersionName(code) {
 }
 
 // ========== EVENT LISTENERS ==========
+fetchBtn.addEventListener('click', ensureFetched);
 copyBtn.addEventListener('click', copyToClipboard);
 pasteBtn.addEventListener('click', pasteVerse);
 
 verseRefInput.addEventListener('keypress', (e) => {
   if (e.key === 'Enter') {
-    const reference = verseRefInput.value;
-    const version = versionSelect.value;
-    
-    if (!reference.trim()) {
-      showStatus('Please enter a verse reference.', 'error');
-      return;
-    }
-    
-    fetchVerse(reference, version);
+    ensureFetched();
   }
 });
 
@@ -389,10 +459,9 @@ verseRefInput.addEventListener('keypress', (e) => {
 document.addEventListener('DOMContentLoaded', () => {
   verseRefInput.focus();
   log('Extension loaded');
-  
-  // Check if configured
-  const validation = validateConfig();
-  if (!validation.valid) {
-    showStatus('⚠️ Configure Supabase API in config.js', 'error');
+
+  // Without Supabase credentials the free public API is used instead
+  if (!validateConfig().valid) {
+    log('Supabase not configured; using public Bible API');
   }
 });

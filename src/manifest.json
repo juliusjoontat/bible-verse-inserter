@@ -11,7 +11,8 @@
     "storage"
   ],
   "host_permissions": [
-    "https://*.supabase.co/*"
+    "https://*.supabase.co/*",
+    "https://bolls.life/*"
   ],
   "action": {
     "default_popup": "popup.html",

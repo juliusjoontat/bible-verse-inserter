@@ -16,6 +16,10 @@ const CONFIG = {
   
   // API endpoint path
   API_ENDPOINT: '/rest/v1/verses',
+
+  // Public Bible API used automatically when Supabase is not configured.
+  // No account or key required. https://bolls.life
+  PUBLIC_API_URL: 'https://bolls.life',
   
   // Cache settings
   CACHE_ENABLED: true,
