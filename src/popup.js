@@ -16,6 +16,7 @@ const verseTextDiv = document.getElementById('verseText');
 
 // ========== STATE ==========
 let currentVerseText = '';
+let currentVerseHtml = '';
 let currentVerseRef = '';
 let lastFetchedKey = '';
 let verseCache = new Map();
@@ -57,6 +58,9 @@ async function fetchVerse(reference, version) {
         showStatus(`Book not found: "${ref.book}". Check spelling.`, 'error');
         return;
       }
+      // Expand the abbreviation to the full book name for display/output
+      // (e.g. "psa" -> "Psalm", "1 cor" -> "1 Corinthians")
+      ref.book = getBookName(bookNum) || ref.book;
       lookups.push({ ref, bookNum });
     }
 
@@ -190,6 +194,14 @@ async function fetchSegmentSupabase(bookNum, ref, version) {
   return verses;
 }
 
+// ========== ESCAPE HTML ==========
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 // ========== FORMAT A PARSED REFERENCE ==========
 function formatRef(ref) {
   let str = `${ref.book} ${ref.chapter}`;
@@ -217,13 +229,34 @@ function displaySegments(segments, version) {
 
   const referenceStr = `${segments.map(s => formatRef(s.ref)).join('; ')} (${getVersionName(version)})`;
 
-  // Build plain text for copying
-  currentVerseText = `${referenceStr}\n\n` + segments
+  // Build rich HTML for the clipboard. Inline styles are used (not CSS
+  // classes) so Word and Google Docs render them. Verse numbers are real
+  // superscript so they paste small and raised, not as an auto-numbered list.
+  currentVerseHtml =
+    `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">` +
+    segments
+      .map(({ ref, verses }) => {
+        const header = multiple
+          ? `<p style="margin:0 0 2pt 0;font-weight:bold">${escapeHtml(formatRef(ref))}</p>`
+          : '';
+        const body = verses
+          .map(v => `<sup>${v.verse_number}</sup>&nbsp;${escapeHtml(v.text)}`)
+          .join(' ');
+        return `${header}<p style="margin:0 0 8pt 0">${body}</p>`;
+      })
+      .join('') +
+    `<p style="margin:8pt 0 0 0;font-style:italic;color:#555">${escapeHtml(referenceStr)}</p>` +
+    `</div>`;
+
+  // Build plain-text fallback for editors that ignore HTML. Verses flow as a
+  // paragraph with inline numbers (no leading "18." so Word's AutoFormat
+  // won't turn them into an oversized numbered list).
+  currentVerseText = segments
     .map(({ ref, verses }) => {
       const header = multiple ? `${formatRef(ref)}\n` : '';
-      return header + verses.map(v => `${v.verse_number}. ${v.text}`).join('\n');
+      return header + verses.map(v => `[${v.verse_number}] ${v.text}`).join(' ');
     })
-    .join('\n\n');
+    .join('\n\n') + `\n\n${referenceStr}`;
 
   currentVerseRef = referenceStr;
 
@@ -256,12 +289,30 @@ async function ensureFetched() {
 async function copyToClipboard() {
   if (!(await ensureFetched())) return;
 
-  navigator.clipboard.writeText(currentVerseText).then(() => {
+  try {
+    // Write both rich HTML and plain text. Word/Docs pick the HTML and
+    // render verse numbers as small superscript; plain editors get the text.
+    if (navigator.clipboard.write && typeof ClipboardItem !== 'undefined') {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([currentVerseHtml], { type: 'text/html' }),
+          'text/plain': new Blob([currentVerseText], { type: 'text/plain' })
+        })
+      ]);
+    } else {
+      await navigator.clipboard.writeText(currentVerseText);
+    }
     showStatus('✓ Copied to clipboard!', 'success');
-  }).catch((err) => {
+  } catch (err) {
     console.error('Copy failed:', err);
-    showStatus('Failed to copy to clipboard.', 'error');
-  });
+    // Last-resort fallback to plain text only
+    try {
+      await navigator.clipboard.writeText(currentVerseText);
+      showStatus('✓ Copied to clipboard!', 'success');
+    } catch (err2) {
+      showStatus('Failed to copy to clipboard.', 'error');
+    }
+  }
 }
 
 // ========== AUTO-PASTE VERSE ==========
@@ -427,6 +478,27 @@ function getBookNumber(name) {
   }
   
   return bookNum || null;
+}
+
+// ========== BOOK NUMBER TO FULL NAME ==========
+// Reverse of getBookNumber: maps 1-66 to the canonical full book name so
+// abbreviations expand on output (e.g. "psa" -> "Psalm").
+function getBookName(bookNum) {
+  const names = [
+    null,
+    'Genesis', 'Exodus', 'Leviticus', 'Numbers', 'Deuteronomy', 'Joshua',
+    'Judges', 'Ruth', '1 Samuel', '2 Samuel', '1 Kings', '2 Kings',
+    '1 Chronicles', '2 Chronicles', 'Ezra', 'Nehemiah', 'Esther', 'Job',
+    'Psalm', 'Proverbs', 'Ecclesiastes', 'Song of Solomon', 'Isaiah',
+    'Jeremiah', 'Lamentations', 'Ezekiel', 'Daniel', 'Hosea', 'Joel', 'Amos',
+    'Obadiah', 'Jonah', 'Micah', 'Nahum', 'Habakkuk', 'Zephaniah', 'Haggai',
+    'Zechariah', 'Malachi', 'Matthew', 'Mark', 'Luke', 'John', 'Acts',
+    'Romans', '1 Corinthians', '2 Corinthians', 'Galatians', 'Ephesians',
+    'Philippians', 'Colossians', '1 Thessalonians', '2 Thessalonians',
+    '1 Timothy', '2 Timothy', 'Titus', 'Philemon', 'Hebrews', 'James',
+    '1 Peter', '2 Peter', '1 John', '2 John', '3 John', 'Jude', 'Revelation'
+  ];
+  return names[bookNum] || null;
 }
 
 // ========== VERSION NAME LOOKUP ==========
